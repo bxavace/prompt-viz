@@ -138,6 +138,9 @@ def main() -> None:
                 f"Excluded {removed_rows} exempt row(s) from the uploaded dataset."
             )
 
+    # Capture dataframe after basic cleaning but before date filtering for YTD calculations
+    clean_df = df.copy()
+
     date_filter_caption: str | None = None
     if "task_date" in df.columns:
         parsed_dates = pd.to_datetime(df["task_date"], errors="coerce")
@@ -682,6 +685,57 @@ def main() -> None:
             width='stretch',
             hide_index=True,
         )
+
+    st.markdown("---")
+    st.subheader("Employee Leave Summary (YTD)")
+    if "type" not in clean_df.columns or "task_date" not in clean_df.columns:
+        st.info("Missing 'type' or 'task_date' column to calculate YTD leaves.")
+    else:
+        parsed_dates_all = pd.to_datetime(clean_df["task_date"], errors="coerce")
+        latest_date = parsed_dates_all.max()
+        if pd.notnull(latest_date):
+            ytd_start_all = pd.Timestamp(year=latest_date.year, month=1, day=1)
+            ytd_mask = (parsed_dates_all >= ytd_start_all) & (parsed_dates_all <= latest_date)
+            
+            leave_df = clean_df.loc[ytd_mask].copy()
+            leave_df["hours_spent"] = pd.to_numeric(leave_df["hours_spent"], errors="coerce").fillna(0)
+            
+            # Filter for rows where type is 'leave'
+            leave_records = leave_df[leave_df["type"].fillna("").astype(str).str.lower() == "leave"]
+            
+            if leave_records.empty:
+                st.info(f"No leave records found for the YTD period ({ytd_start_all.date()} to {latest_date.date()}).")
+            else:
+                leave_summary = (
+                    leave_records.groupby(["unit", "employee"])["hours_spent"]
+                    .sum()
+                    .reset_index()
+                    .sort_values(["unit", "hours_spent"], ascending=[True, False])
+                )
+                
+                # Calculate Mandays (assume 8 hours = 1 manday)
+                leave_summary["mandays"] = leave_summary["hours_spent"] / 8
+                
+                leave_summary.rename(
+                    columns={
+                        "unit": "Unit",
+                        "employee": "Employee",
+                        "hours_spent": "Total Leave Hours (YTD)",
+                        "mandays": "Leave Mandays (YTD)",
+                    },
+                    inplace=True,
+                )
+                
+                st.caption(f"Aggregating leaves from {ytd_start_all.date()} to {latest_date.date()}.")
+                st.dataframe(
+                    leave_summary,
+                    column_config={
+                        "Total Leave Hours (YTD)": st.column_config.NumberColumn(format="%.2f"),
+                        "Leave Mandays (YTD)": st.column_config.NumberColumn(format="%.2f"),
+                    },
+                    width='stretch',
+                    hide_index=True,
+                )
 
 
 if __name__ == "__main__":
