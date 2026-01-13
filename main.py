@@ -106,7 +106,7 @@ def main() -> None:
                 format="YYYY-MM-DD",
                 key=f"holiday_{i}",
             )
-            if holiday_date:
+            if holiday_date and holiday_date not in holiday_dates:
                 holiday_dates.append(holiday_date)
 
     if uploaded_file is None:
