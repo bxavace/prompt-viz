@@ -89,13 +89,25 @@ def main() -> None:
         "Upload exempt employees CSV (optional)", type="csv"
     )
     apply_holiday = st.checkbox("Apply holiday adjustment to utilization")
-    holiday_date: date | None = None
+    holiday_dates: list[date] = []
     if apply_holiday:
-        holiday_date = st.date_input(
-            "Holiday date",
-            value=date.today(),
-            format="YYYY-MM-DD",
+        st.write("Select holiday dates (you can select multiple dates):")
+        num_holidays = st.number_input(
+            "Number of holidays",
+            min_value=1,
+            max_value=10,
+            value=1,
+            step=1,
         )
+        for i in range(num_holidays):
+            holiday_date = st.date_input(
+                f"Holiday date {i + 1}",
+                value=None,
+                format="YYYY-MM-DD",
+                key=f"holiday_{i}",
+            )
+            if holiday_date and holiday_date not in holiday_dates:
+                holiday_dates.append(holiday_date)
 
     if uploaded_file is None:
         st.info("Awaiting CSV upload. The file must include the expected columns.")
@@ -173,10 +185,12 @@ def main() -> None:
     st.dataframe(df)
     if date_filter_caption:
         st.caption(date_filter_caption)
-    if holiday_date:
-        adjusted_week = max(WORK_WEEK_HOURS - HOLIDAY_DAY_HOURS, 0)
+    if holiday_dates:
+        holiday_count = len(holiday_dates)
+        adjusted_week = max(WORK_WEEK_HOURS - (HOLIDAY_DAY_HOURS * holiday_count), 0)
+        holiday_dates_str = ", ".join(f"{hd:%Y-%m-%d}" for hd in holiday_dates)
         st.caption(
-            f"Utilization capacity reduced to {adjusted_week} hours per employee due to holiday on {holiday_date:%Y-%m-%d}."
+            f"Utilization capacity reduced to {adjusted_week} hours per employee due to {holiday_count} holiday(s) on: {holiday_dates_str}."
         )
 
     if "task_date" in df.columns:
@@ -237,8 +251,9 @@ def main() -> None:
     )
     unit_group["total_hours"].fillna(0, inplace=True)
     unit_group["employee_count"].fillna(0, inplace=True)
+    holiday_hours_reduction = HOLIDAY_DAY_HOURS * len(holiday_dates)
     per_employee_capacity = max(
-        WORK_WEEK_HOURS - (HOLIDAY_DAY_HOURS if holiday_date else 0),
+        WORK_WEEK_HOURS - holiday_hours_reduction,
         0,
     )
     unit_group["utilization_capacity"] = (
