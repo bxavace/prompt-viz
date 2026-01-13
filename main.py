@@ -19,7 +19,6 @@ EXPECTED_COLUMNS = [
     "remarks",
     "ticket_number",
     "ticket_type",
-    "task_type",
     "work_setup",
     "service_type",
     "type",
@@ -443,14 +442,14 @@ def main() -> None:
         width='stretch',
     )
 
-    fig_ticket = px.pie(
-        ticket_summary,
-        names="Ticket Type",
-        values="Entries",
-        title="Ticket Entries Distribution",
-    )
-    fig_ticket.update_traces(textposition="inside", textinfo="percent+label")
-    st.plotly_chart(fig_ticket, width='stretch')
+    # fig_ticket = px.pie(
+    #     ticket_summary,
+    #     names="Ticket Type",
+    #     values="Entries",
+    #     title="Ticket Entries Distribution",
+    # )
+    # fig_ticket.update_traces(textposition="inside", textinfo="percent+label")
+    # st.plotly_chart(fig_ticket, width='stretch')
 
     st.subheader("Sum of Hours Spent by Ticket Type")
     ticket_hours = ticket_summary.copy()
@@ -479,6 +478,65 @@ def main() -> None:
         fig_ticket_hours.update_traces(textposition="inside", textinfo="percent+label")
         st.plotly_chart(fig_ticket_hours, width='stretch')
 
+    st.markdown("---")
+    st.subheader("Deep Dive: Solution Delivery Units Analysis")
+    target_units = ["Solution Delivery - Consumer", "Solution Delivery - Corporate"]
+    
+    task_cols = st.columns(2)
+    for idx, unit_name in enumerate(target_units):
+        unit_df = df[df["unit"] == unit_name].copy()
+        if unit_df.empty:
+            task_cols[idx].info(f"No records found for {unit_name}")
+            continue
+            
+        unit_df["hours_spent"] = pd.to_numeric(unit_df["hours_spent"], errors="coerce")
+        task_dist = (
+            unit_df.groupby("type")["hours_spent"]
+            .sum()
+            .reset_index()
+            .sort_values("hours_spent", ascending=False)
+        )
+        
+        if task_dist["hours_spent"].sum() > 0:
+            fig_sd_task = px.pie(
+                task_dist,
+                names="type",
+                values="hours_spent",
+                title=f"Task Type: {unit_name}",
+            )
+            fig_sd_task.update_traces(textposition="inside", textinfo="percent+label")
+            task_cols[idx].plotly_chart(fig_sd_task, use_container_width=True)
+
+    ticket_cols = st.columns(2)
+    for idx, unit_name in enumerate(target_units):
+        unit_df = df[df["unit"] == unit_name].copy()
+        ticket_only = unit_df[unit_df["type"].astype(str).str.lower() == "ticket"].copy()
+        
+        if ticket_only.empty:
+            ticket_cols[idx].info(f"No ticket tasks for {unit_name}")
+            continue
+            
+        ticket_only["hours_spent"] = pd.to_numeric(ticket_only["hours_spent"], errors="coerce")
+        ticket_dist = (
+            ticket_only.groupby("ticket_type")["hours_spent"]
+            .sum()
+            .reset_index()
+            .sort_values("hours_spent", ascending=False)
+        )
+        
+        if ticket_dist["hours_spent"].sum() > 0:
+            # Using a donut chart style for variety and clarity if many tickets exist
+            fig_sd_ticket = px.pie(
+                ticket_dist,
+                names="ticket_type",
+                values="hours_spent",
+                title=f"Ticket Type: {unit_name}",
+                hole=0.4
+            )
+            fig_sd_ticket.update_traces(textposition="inside", textinfo="percent+label")
+            ticket_cols[idx].plotly_chart(fig_sd_ticket, use_container_width=True)
+
+    st.markdown("---")
     st.subheader("Ticket Type Hours by Unit")
     if "unit" not in ticket_entries.columns:
         st.info("The uploaded file does not include a 'unit' column for ticket entries.")
