@@ -143,32 +143,53 @@ def main() -> None:
         parsed_dates = pd.to_datetime(df["task_date"], errors="coerce")
         valid_dates = parsed_dates.dropna()
         if not valid_dates.empty:
-            min_date = valid_dates.min().date()
-            max_date = valid_dates.max().date()
-            range_value = st.date_input(
-                "Task date range",
-                value=(min_date, max_date),
-                min_value=min_date,
-                max_value=max_date,
-            )
-            if isinstance(range_value, tuple):
-                start_date, end_date = range_value
+            full_min_date = valid_dates.min().date()
+            full_max_date = valid_dates.max().date()
+
+            st.sidebar.markdown("### Selection Filters")
+            use_ytd = st.sidebar.checkbox("Apply YTD Filter", value=False)
+            
+            if use_ytd:
+                # Calculate YTD range
+                ytd_start = date(full_max_date.year, 1, 1)
+                start_date = max(full_min_date, ytd_start)
+                end_date = full_max_date
+                
+                if full_min_date > ytd_start:
+                    st.warning(
+                        f"YTD Filter active: Dataset starts at {full_min_date:%Y-%m-%d}, "
+                        f"which is after the expected YTD start date {ytd_start:%Y-%m-%d}."
+                    )
             else:
-                start_date = end_date = range_value
+                range_value = st.date_input(
+                    "Task date range",
+                    value=(full_min_date, full_max_date),
+                    min_value=full_min_date,
+                    max_value=full_max_date,
+                )
+                if isinstance(range_value, tuple) and len(range_value) == 2:
+                    start_date, end_date = range_value
+                else:
+                    start_date = end_date = (range_value[0] if isinstance(range_value, list) else range_value)
+
             if start_date > end_date:
                 start_date, end_date = end_date, start_date
+            
             start_ts = pd.Timestamp(start_date)
             end_ts = pd.Timestamp(end_date)
             mask = parsed_dates.between(start_ts, end_ts, inclusive="both")
             kept_rows = mask.sum()
             df = df.loc[mask].copy()
             dropped = len(mask) - kept_rows
-            if dropped or start_date != min_date or end_date != max_date:
+            
+            if dropped or start_date != full_min_date or end_date != full_max_date:
                 date_filter_caption = (
                     f"Filtered to {start_date:%Y-%m-%d} – {end_date:%Y-%m-%d}."
                 )
                 if dropped:
                     date_filter_caption += f" Removed {dropped} row(s) outside the range or without valid dates."
+
+            st.info(f"Data Coverage: {full_min_date:%Y-%m-%d} to {full_max_date:%Y-%m-%d}")
 
     st.dataframe(df)
     if date_filter_caption:
@@ -178,16 +199,6 @@ def main() -> None:
         st.caption(
             f"Utilization capacity reduced to {adjusted_week} hours per employee due to holiday on {holiday_date:%Y-%m-%d}."
         )
-
-    if "task_date" in df.columns:
-        date_series = pd.to_datetime(df["task_date"], errors="coerce")
-        valid_dates = date_series.dropna()
-        if not valid_dates.empty:
-            min_date = valid_dates.min()
-            max_date = valid_dates.max()
-            st.info(
-                f"Date coverage: {min_date.strftime('%Y-%m-%d')} to {max_date.strftime('%Y-%m-%d')}"
-            )
 
     try:
         roster_names = load_employee_roster()
@@ -580,7 +591,7 @@ def main() -> None:
         width='stretch',
     )
 
-    st.subheader("Top Projects by Hours")
+    st.subheader("Project Analysis")
     if "project" not in df.columns:
         st.info("The uploaded file does not include a 'project' column.")
         return
@@ -606,26 +617,71 @@ def main() -> None:
         )
         .reset_index()
         .sort_values("total_hours", ascending=False)
-        .head(10)
     )
 
-    project_summary.rename(
+    project_summary_display = project_summary.rename(
         columns={
             "project": "Project",
             "total_hours": "Hours Spent",
             "employee_count": "Distinct Employees",
-        },
-        inplace=True,
-    )
+        }
+    ).copy()
 
     st.dataframe(
-        project_summary,
+        project_summary_display,
         column_config={
             "Hours Spent": st.column_config.NumberColumn(format="%.2f"),
             "Distinct Employees": st.column_config.NumberColumn(format="%d"),
         },
         width='stretch',
     )
+
+    st.markdown("---")
+    st.subheader("Employee Breakdown by Project")
+    selected_project = st.selectbox(
+        "Select a Project to drill down",
+        options=project_summary["project"].unique(),
+    )
+
+    if selected_project:
+        project_details = project_filtered[project_filtered["project"] == selected_project].copy()
+        
+        # Breakdown by Unit and Employee
+        breakdown = (
+            project_details.groupby(["unit", "employee"], dropna=False)["hours_spent"]
+            .sum()
+            .reset_index()
+            .sort_values(["unit", "hours_spent"], ascending=[True, False])
+        )
+        
+        # Add Unit totals for context
+        unit_totals = (
+            project_details.groupby("unit", dropna=False)["hours_spent"]
+            .sum()
+            .reset_index()
+            .rename(columns={"hours_spent": "Unit Total Hours"})
+        )
+        
+        breakdown = breakdown.merge(unit_totals, on="unit")
+        breakdown.rename(
+            columns={
+                "unit": "Unit",
+                "employee": "Employee",
+                "hours_spent": "Individual Hours",
+            },
+            inplace=True,
+        )
+        
+        st.write(f"Showing breakdown for: **{selected_project}**")
+        st.dataframe(
+            breakdown,
+            column_config={
+                "Individual Hours": st.column_config.NumberColumn(format="%.2f"),
+                "Unit Total Hours": st.column_config.NumberColumn(format="%.2f"),
+            },
+            width='stretch',
+            hide_index=True,
+        )
 
 
 if __name__ == "__main__":
