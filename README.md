@@ -4,11 +4,13 @@ for 2GO, Brylle Nunez
 A Streamlit app to automate the analysis of PROMPT results by 2GO IT Department.
 
 ## Usage
-1. Install requirements (`uv` or `pip`)
-2. Enable virtual environment
-3. Run the following command:
+1. Install requirements and enable virtual environment with `uv`:
 ```
-streamlit run main.py
+uv sync
+```
+1. Run the following command:
+```
+uv run streamlit run main.py
 ```
 
 ## Requirements
