@@ -291,6 +291,26 @@ def main() -> None:
         return
 
     work_setup_clean = df["work_setup"].fillna("Unspecified")
+    
+    # Total distribution summarized for the pie chart
+    work_setup_totals = (
+        df.assign(hours_spent=hours_numeric, work_setup=work_setup_clean)
+        .groupby("work_setup", dropna=False)["hours_spent"]
+        .sum()
+        .reset_index()
+        .sort_values("hours_spent", ascending=False)
+    )
+
+    if not work_setup_totals.empty and work_setup_totals["hours_spent"].sum() > 0:
+        fig_pie = px.pie(
+            work_setup_totals,
+            names="work_setup",
+            values="hours_spent",
+            title="Total Man-Hours Distribution by Work Setup",
+        )
+        fig_pie.update_traces(textposition="inside", textinfo="percent+label")
+        st.plotly_chart(fig_pie, width='stretch')
+
     work_setup_pivot = (
         df.assign(hours_spent=hours_numeric, work_setup=work_setup_clean)
         .groupby(["unit", "work_setup"], dropna=False)["hours_spent"]
@@ -304,69 +324,37 @@ def main() -> None:
         )
     )
 
-    if work_setup_pivot.empty:
-        st.info("No man-hour data available to summarize by work setup.")
-        return
+    if not work_setup_pivot.empty:
+        row_totals = work_setup_pivot.sum(axis=1)
+        percentage_by_setup = work_setup_pivot.div(row_totals.replace(0, pd.NA), axis=0) * 100
+        percentage_by_setup.fillna(0.0, inplace=True)
+        percentage_by_setup = percentage_by_setup.round(1)
 
-    row_totals = work_setup_pivot.sum(axis=1)
-    percentage_by_setup = work_setup_pivot.div(row_totals.replace(0, pd.NA), axis=0) * 100
-    percentage_by_setup.fillna(0.0, inplace=True)
-    percentage_by_setup = percentage_by_setup.round(1)
+        percentage_display = percentage_by_setup.reset_index().rename(columns={"unit": "Unit"})
+        percentage_columns = [col for col in percentage_display.columns if col != "Unit"]
+        column_config = {
+            col: st.column_config.NumberColumn(format="%.1f%%") for col in percentage_columns
+        }
+        st.write("Percentage breakdown per unit:")
+        st.dataframe(percentage_display, column_config=column_config)
 
-    percentage_display = percentage_by_setup.reset_index().rename(columns={"unit": "Unit"})
-    percentage_columns = [col for col in percentage_display.columns if col != "Unit"]
-    column_config = {
-        col: st.column_config.NumberColumn(format="%.1f%%") for col in percentage_columns
-    }
-    st.dataframe(percentage_display, column_config=column_config)
-
-    stacked_data = (
-        percentage_by_setup.reset_index()
-        .rename(columns={"unit": "Unit"})
-        .melt(id_vars="Unit", var_name="Work Setup", value_name="Percentage")
-    )
-
-    if stacked_data["Percentage"].sum() > 0:
-        fig_work_setup = px.bar(
-            stacked_data,
-            x="Unit",
-            y="Percentage",
-            color="Work Setup",
-            title="Work Setup Share per Unit",
-            barmode="stack",
-        )
-        fig_work_setup.update_layout(yaxis_title="Percentage", xaxis_title="Unit")
-        st.plotly_chart(fig_work_setup, width='stretch')
-
-    st.subheader("Work Setup Distribution")
-    work_setup_totals = (
-        df.assign(hours_spent=hours_numeric, work_setup=work_setup_clean)
-        .groupby("work_setup", dropna=False)["hours_spent"]
-        .sum()
-        .reset_index()
-    )
-
-    if work_setup_totals.empty:
-        st.info("No data available to visualize work setup distribution.")
-    else:
-        work_setup_totals.rename(
-            columns={"work_setup": "Work Setup", "hours_spent": "Hours Spent"},
-            inplace=True,
-        )
-        st.dataframe(
-            work_setup_totals,
-            column_config={"Hours Spent": st.column_config.NumberColumn(format="%.2f")},
-            width='stretch',
+        stacked_data = (
+            percentage_by_setup.reset_index()
+            .rename(columns={"unit": "Unit"})
+            .melt(id_vars="Unit", var_name="Work Setup", value_name="Percentage")
         )
 
-        fig = px.pie(
-            work_setup_totals,
-            names="Work Setup",
-            values="Hours Spent",
-            title="Man-Hours Distribution by Work Setup",
-        )
-        fig.update_traces(textposition="inside", textinfo="percent+label")
-        st.plotly_chart(fig, width='stretch')
+        if stacked_data["Percentage"].sum() > 0:
+            fig_work_setup = px.bar(
+                stacked_data,
+                x="Unit",
+                y="Percentage",
+                color="Work Setup",
+                title="Work Setup Share per Unit",
+                barmode="stack",
+            )
+            fig_work_setup.update_layout(yaxis_title="Percentage", xaxis_title="Unit")
+            st.plotly_chart(fig_work_setup, width='stretch')
 
     st.subheader("Man-hours Spent by Task Type")
     if "type" not in df.columns:
