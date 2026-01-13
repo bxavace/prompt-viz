@@ -99,14 +99,15 @@ def main() -> None:
             value=1,
             step=1,
         )
-        for i in range(int(num_holidays)):
+        for i in range(num_holidays):
             holiday_date = st.date_input(
                 f"Holiday date {i + 1}",
-                value=date.today(),
+                value=None,
                 format="YYYY-MM-DD",
                 key=f"holiday_{i}",
             )
-            holiday_dates.append(holiday_date)
+            if holiday_date:
+                holiday_dates.append(holiday_date)
 
     if uploaded_file is None:
         st.info("Awaiting CSV upload. The file must include the expected columns.")
@@ -250,7 +251,7 @@ def main() -> None:
     )
     unit_group["total_hours"].fillna(0, inplace=True)
     unit_group["employee_count"].fillna(0, inplace=True)
-    holiday_hours_reduction = HOLIDAY_DAY_HOURS * len(holiday_dates) if holiday_dates else 0
+    holiday_hours_reduction = HOLIDAY_DAY_HOURS * len(holiday_dates)
     per_employee_capacity = max(
         WORK_WEEK_HOURS - holiday_hours_reduction,
         0,
