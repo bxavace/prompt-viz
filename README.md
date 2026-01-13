@@ -3,6 +3,14 @@ for 2GO, Brylle Nunez
 
 A Streamlit app to automate the analysis of PROMPT results by 2GO IT Department.
 
+## Usage
+1. Install requirements (`uv` or `pip`)
+2. Enable virtual environment
+3. Run the following command:
+```
+streamlit run main.py
+```
+
 ## Requirements
 ```
 "streamlit>=1.52.0",
@@ -54,7 +62,9 @@ For developers:
     * SD - Corporate Ticket Type Distribution
 * Manhours Spent by Ticket Type - Units
 * Top Projects by Manhours
+* Employee breakdown working on the project
+* Aggregated leaves manhours/mandays
 
 ## Milestones/TODO
-* Enable multi-ranged holiday selection since some months have multiple holidays.
+✅ Enable multi-ranged holiday selection since some months have multiple holidays.
 * Refactoring of the codebase to improve readability.
