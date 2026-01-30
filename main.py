@@ -2,11 +2,18 @@ import difflib
 import re
 from datetime import date
 from pathlib import Path
+from io import BytesIO
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 import numpy as np
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 
 EXPECTED_COLUMNS = [
@@ -79,10 +86,301 @@ def compute_compliance(
     return compliance_pct, unmatched, matched, total
 
 
+def generate_pdf_report(
+    df: pd.DataFrame,
+    compliance_pct: float,
+    matched_count: int,
+    total_roster: int,
+    unit_group: pd.DataFrame,
+    work_setup_totals: pd.DataFrame,
+    task_type_totals: pd.DataFrame,
+    ticket_summary: pd.DataFrame,
+    ticket_hours: pd.DataFrame,
+    project_summary_display: pd.DataFrame,
+    leave_summary: pd.DataFrame | None,
+    date_range_text: str = "",
+) -> BytesIO:
+    """
+    Generate a comprehensive PDF report with insights and visualizations.
+    Returns a BytesIO object containing the PDF.
+    """
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
+    story = []
+    styles = getSampleStyleSheet()
+    
+    # Custom styles
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        textColor=colors.HexColor('#1f77b4'),
+        spaceAfter=30,
+        alignment=TA_CENTER,
+    )
+    
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=14,
+        textColor=colors.HexColor('#2c3e50'),
+        spaceAfter=12,
+        spaceBefore=12,
+    )
+    
+    # Title
+    story.append(Paragraph("PROMPT Viz - Analytics Report", title_style))
+    if date_range_text:
+        story.append(Paragraph(date_range_text, styles['Normal']))
+    story.append(Spacer(1, 0.3*inch))
+    
+    # 1. Compliance Rating
+    story.append(Paragraph("1. Compliance Rating", heading_style))
+    compliance_data = [
+        ["Metric", "Value"],
+        ["Roster Coverage", f"{compliance_pct:.1f}%"],
+        ["Matched Employees", f"{matched_count}/{total_roster}"],
+    ]
+    compliance_table = Table(compliance_data, colWidths=[3*inch, 2*inch])
+    compliance_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 12),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+    ]))
+    story.append(compliance_table)
+    story.append(Spacer(1, 0.3*inch))
+    
+    # 2. Man-Hour Utilization
+    story.append(Paragraph("2. Man-Hour Utilization", heading_style))
+    if not unit_group.empty:
+        util_data = [list(unit_group.columns)]
+        for _, row in unit_group.iterrows():
+            util_data.append([
+                str(row['Unit']),
+                f"{row['Hours Spent']:.2f}",
+                f"{int(row['Distinct Employees'])}",
+                f"{row['Available Hours']:.2f}",
+                f"{row['Utilization %']:.1f}%",
+            ])
+        
+        util_table = Table(util_data, colWidths=[1.5*inch, 1.2*inch, 1.2*inch, 1.2*inch, 1.2*inch])
+        util_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ]))
+        story.append(util_table)
+    story.append(Spacer(1, 0.3*inch))
+    
+    # 3. Work Setup Distribution
+    story.append(Paragraph("3. Work Setup Distribution", heading_style))
+    if not work_setup_totals.empty and work_setup_totals['hours_spent'].sum() > 0:
+        # Add work setup chart
+        try:
+            fig = px.pie(
+                work_setup_totals,
+                names='work_setup',
+                values='hours_spent',
+                title='Total Man-Hours Distribution by Work Setup'
+            )
+            img_bytes = fig.to_image(format="png", width=600, height=400)
+            img = Image(BytesIO(img_bytes), width=5*inch, height=3.3*inch)
+            story.append(img)
+        except Exception as e:
+            story.append(Paragraph(f"Chart generation failed: {str(e)}", styles['Normal']))
+    else:
+        story.append(Paragraph("No work setup data available.", styles['Normal']))
+    story.append(Spacer(1, 0.2*inch))
+    
+    # Page break before next section
+    story.append(PageBreak())
+    
+    # 4. Task Type Distribution
+    story.append(Paragraph("4. Task Type Distribution", heading_style))
+    if not task_type_totals.empty:
+        task_data = [["Task Type", "Hours Spent", "Share %"]]
+        for _, row in task_type_totals.iterrows():
+            task_data.append([
+                str(row['Task Type']),
+                f"{row['Hours Spent']:.2f}",
+                f"{row['Share %']:.1f}%",
+            ])
+        
+        task_table = Table(task_data, colWidths=[2.5*inch, 1.5*inch, 1.5*inch])
+        task_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ]))
+        story.append(task_table)
+        story.append(Spacer(1, 0.2*inch))
+        
+        # Add task type chart
+        try:
+            fig = px.pie(
+                task_type_totals,
+                names='Task Type',
+                values='Hours Spent',
+                title='Man-Hours Distribution by Task Type'
+            )
+            img_bytes = fig.to_image(format="png", width=600, height=400)
+            img = Image(BytesIO(img_bytes), width=5*inch, height=3.3*inch)
+            story.append(img)
+        except Exception as e:
+            story.append(Paragraph(f"Chart generation failed: {str(e)}", styles['Normal']))
+    else:
+        story.append(Paragraph("No task type data available.", styles['Normal']))
+    story.append(Spacer(1, 0.2*inch))
+    
+    # Page break before next section
+    story.append(PageBreak())
+    
+    # 5. Ticket Type Analysis
+    story.append(Paragraph("5. Ticket Type Analysis", heading_style))
+    if not ticket_summary.empty:
+        ticket_data = [["Ticket Type", "Entries", "Hours Spent"]]
+        for _, row in ticket_summary.iterrows():
+            ticket_data.append([
+                str(row['Ticket Type']),
+                f"{int(row['Entries'])}",
+                f"{row['Hours Spent']:.2f}",
+            ])
+        
+        ticket_table = Table(ticket_data, colWidths=[2.5*inch, 1.5*inch, 1.5*inch])
+        ticket_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ]))
+        story.append(ticket_table)
+        story.append(Spacer(1, 0.2*inch))
+        
+        # Add ticket hours chart if available
+        if not ticket_hours.empty and 'Share %' in ticket_hours.columns:
+            try:
+                fig = px.pie(
+                    ticket_hours,
+                    names='Ticket Type',
+                    values='Hours Spent',
+                    title='Man-Hours Allocation by Ticket Type'
+                )
+                img_bytes = fig.to_image(format="png", width=600, height=400)
+                img = Image(BytesIO(img_bytes), width=5*inch, height=3.3*inch)
+                story.append(img)
+            except Exception as e:
+                story.append(Paragraph(f"Chart generation failed: {str(e)}", styles['Normal']))
+    else:
+        story.append(Paragraph("No ticket data available.", styles['Normal']))
+    story.append(Spacer(1, 0.2*inch))
+    
+    # Page break before next section
+    story.append(PageBreak())
+    
+    # 6. Project Analysis
+    story.append(Paragraph("6. Top Projects by Hours", heading_style))
+    if not project_summary_display.empty:
+        # Limit to top 15 projects for the PDF
+        top_projects = project_summary_display.head(15)
+        proj_data = [["Project", "Hours Spent", "Distinct Employees"]]
+        for _, row in top_projects.iterrows():
+            proj_data.append([
+                str(row['Project'])[:40],  # Truncate long project names
+                f"{row['Hours Spent']:.2f}",
+                f"{int(row['Distinct Employees'])}",
+            ])
+        
+        proj_table = Table(proj_data, colWidths=[3*inch, 1.5*inch, 2*inch])
+        proj_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ]))
+        story.append(proj_table)
+        if len(project_summary_display) > 15:
+            story.append(Paragraph(f"<i>Showing top 15 of {len(project_summary_display)} projects</i>", styles['Normal']))
+    else:
+        story.append(Paragraph("No project data available.", styles['Normal']))
+    story.append(Spacer(1, 0.3*inch))
+    
+    # 7. Employee Leave Summary
+    if leave_summary is not None and not leave_summary.empty:
+        story.append(PageBreak())
+        story.append(Paragraph("7. Employee Leave Summary (YTD)", heading_style))
+        # Limit to top 20 for the PDF
+        top_leaves = leave_summary.head(20)
+        leave_data = [["Unit", "Employee", "Leave Hours", "Leave Mandays"]]
+        for _, row in top_leaves.iterrows():
+            leave_data.append([
+                str(row['Unit'])[:30],
+                str(row['Employee'])[:30],
+                f"{row['Total Leave Hours (YTD)']:.2f}",
+                f"{row['Leave Mandays (YTD)']:.2f}",
+            ])
+        
+        leave_table = Table(leave_data, colWidths=[1.8*inch, 2*inch, 1.3*inch, 1.3*inch])
+        leave_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('ALIGN', (2, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ]))
+        story.append(leave_table)
+        if len(leave_summary) > 20:
+            story.append(Paragraph(f"<i>Showing top 20 of {len(leave_summary)} employees</i>", styles['Normal']))
+    
+    # Build PDF
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+
 def main() -> None:
     st.set_page_config(page_title="Prompt Viz", layout="wide")
     st.title("Prompt Viz")
     st.caption("Upload a CSV to explore its entries.")
+
+    # Initialize variables for PDF report
+    work_setup_totals = pd.DataFrame()
+    task_type_totals = pd.DataFrame()
+    ticket_summary = pd.DataFrame()
+    ticket_hours = pd.DataFrame()
+    project_summary_display = pd.DataFrame()
+    unit_group = pd.DataFrame()
+    compliance_pct = 0.0
+    matched_count = 0
+    total_roster = 0
+    date_filter_caption = None
 
     uploaded_file = st.file_uploader("Upload CSV", type="csv")
     exempt_file = st.file_uploader(
@@ -141,7 +439,6 @@ def main() -> None:
     # Capture dataframe after basic cleaning but before date filtering for YTD calculations
     clean_df = df.copy()
 
-    date_filter_caption: str | None = None
     if "task_date" in df.columns:
         parsed_dates = pd.to_datetime(df["task_date"], errors="coerce")
         valid_dates = parsed_dates.dropna()
@@ -638,6 +935,74 @@ def main() -> None:
         },
         width='stretch',
     )
+    
+    # PDF Report Generation Section
+    st.markdown("---")
+    st.subheader("📄 Generate PDF Report")
+    st.write("Click the button below to generate a comprehensive PDF report of all insights above (excluding interactive search components).")
+    
+    if st.button("Generate PDF Report", type="primary"):
+        try:
+            # Prepare leave_summary for PDF (it may be None if not computed)
+            leave_summary_for_pdf = None
+            if "type" in clean_df.columns and "task_date" in clean_df.columns:
+                parsed_dates_all = pd.to_datetime(clean_df["task_date"], errors="coerce")
+                latest_date = parsed_dates_all.max()
+                if pd.notnull(latest_date):
+                    ytd_start_all = pd.Timestamp(year=latest_date.year, month=1, day=1)
+                    ytd_mask = (parsed_dates_all >= ytd_start_all) & (parsed_dates_all <= latest_date)
+                    leave_df = clean_df.loc[ytd_mask].copy()
+                    leave_df["hours_spent"] = pd.to_numeric(leave_df["hours_spent"], errors="coerce").fillna(0)
+                    leave_records = leave_df[leave_df["type"].fillna("").astype(str).str.lower() == "leave"]
+                    if not leave_records.empty:
+                        leave_summary_for_pdf = (
+                            leave_records.groupby(["unit", "employee"])["hours_spent"]
+                            .sum()
+                            .reset_index()
+                            .sort_values(["unit", "hours_spent"], ascending=[True, False])
+                        )
+                        leave_summary_for_pdf["mandays"] = leave_summary_for_pdf["hours_spent"] / 8
+                        leave_summary_for_pdf.rename(
+                            columns={
+                                "unit": "Unit",
+                                "employee": "Employee",
+                                "hours_spent": "Total Leave Hours (YTD)",
+                                "mandays": "Leave Mandays (YTD)",
+                            },
+                            inplace=True,
+                        )
+            
+            # Build date range text
+            date_range_text = ""
+            if date_filter_caption:
+                date_range_text = date_filter_caption
+            
+            # Generate the PDF
+            pdf_buffer = generate_pdf_report(
+                df=df,
+                compliance_pct=compliance_pct,
+                matched_count=matched_count,
+                total_roster=total_roster,
+                unit_group=unit_group,
+                work_setup_totals=work_setup_totals,
+                task_type_totals=task_type_totals,
+                ticket_summary=ticket_summary,
+                ticket_hours=ticket_hours,
+                project_summary_display=project_summary_display,
+                leave_summary=leave_summary_for_pdf,
+                date_range_text=date_range_text,
+            )
+            
+            # Offer download
+            st.download_button(
+                label="📥 Download PDF Report",
+                data=pdf_buffer,
+                file_name=f"prompt_viz_report_{date.today()}.pdf",
+                mime="application/pdf",
+            )
+            st.success("✅ PDF report generated successfully!")
+        except Exception as e:
+            st.error(f"❌ Failed to generate PDF report: {str(e)}")
 
     st.markdown("---")
     st.subheader("Employee Breakdown by Project")
