@@ -8,12 +8,12 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 import numpy as np
-from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.enums import TA_CENTER
 
 
 EXPECTED_COLUMNS = [
@@ -102,7 +102,32 @@ def generate_pdf_report(
 ) -> BytesIO:
     """
     Generate a comprehensive PDF report with insights and visualizations.
-    Returns a BytesIO object containing the PDF.
+    
+    Args:
+        df: The main DataFrame containing all employee work data
+        compliance_pct: Percentage of roster coverage (0-100)
+        matched_count: Number of employees matched from roster
+        total_roster: Total number of employees in roster
+        unit_group: DataFrame with utilization metrics by unit (columns: Unit, Hours Spent, 
+                    Distinct Employees, Available Hours, Utilization %)
+        work_setup_totals: DataFrame with work setup distribution (columns: work_setup, hours_spent)
+        task_type_totals: DataFrame with task type distribution (columns: Task Type, Hours Spent, Share %)
+        ticket_summary: DataFrame with ticket type summary (columns: Ticket Type, Entries, Hours Spent)
+        ticket_hours: DataFrame with ticket hours and share percentages (columns: Ticket Type, 
+                      Entries, Hours Spent, Share %)
+        project_summary_display: DataFrame with project analysis (columns: Project, Hours Spent, 
+                                 Distinct Employees)
+        leave_summary: Optional DataFrame with YTD leave summary (columns: Unit, Employee, 
+                       Total Leave Hours (YTD), Leave Mandays (YTD)). Can be None if no leave data.
+        date_range_text: Optional text describing the date range filter applied to the data
+    
+    Returns:
+        BytesIO: A buffer containing the generated PDF file, ready for download
+        
+    Note:
+        - The function uses kaleido to render Plotly charts as PNG images in the PDF
+        - Empty DataFrames are handled gracefully with informational messages
+        - The PDF uses A4 page size with 0.5 inch margins
     """
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
